@@ -21,3 +21,21 @@ target/
 /.maven
 /.repository
 .flattened-pom.xml
+
+# IDE / editor settings
+.vscode/
+
+# Cline / assistant metadata
+.clinerules/
+
+# Local build outputs
+outputs/
+artifacts/
+
+# Local scratch / env files
+Init.txt
+*.log
+.env
+.env.*
+secrets*
+*.local
