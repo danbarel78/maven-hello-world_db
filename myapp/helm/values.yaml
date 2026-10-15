@@ -1,0 +1,16 @@
+image:
+  repository: dbareldocker78/hello_world_db
+  tag: ""
+  pullPolicy: Always
+
+# Job controls: the application runs once to completion.
+backoffLimit: 3
+ttlSecondsAfterFinished: 60
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi

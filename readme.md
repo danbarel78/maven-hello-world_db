@@ -299,5 +299,173 @@ The workflow will:
 2. Run `mvn -f myapp/pom.xml clean package`.
 3. Package and upload `myapp/target/myapp-<version>.jar` as a workflow artifact.
 4. Build the Docker image from the `myapp` context, tag it with the version, and push it to Docker Hub.
+5. Download the published image from Docker Hub and run it, asserting the documented console output.
 
-Docker push is skipped on pull requests, to avoid exposing secrets to forked repositories.
+Docker push and the image download/run step are skipped on pull requests, to avoid exposing secrets to forked repositories.
+
+# Deploying to an Existing Kubernetes Cluster
+
+This project ships a Helm chart at `myapp/helm` that deploys the container image to any Kubernetes cluster you already have `kubectl` access to (Docker Desktop, kind, minikube, EKS, AKS, GKE, ...).
+
+Because the application is a **one-shot console program** (it prints two lines and exits), the chart deploys a **`Job`** (`batch/v1`) instead of a `Deployment`. The pod runs once to completion, the output is read from its logs, and the finished resources are cleaned up automatically.
+
+## Prerequisites
+
+| Requirement | Command to verify |
+|---|---|
+| Helm 3+ (validated on Helm v4.3.1) | `helm version` |
+| kubectl installed | `kubectl version --client` |
+| Access to an existing cluster | `kubectl config current-context` |
+| Image reachable (public Docker Hub repo) | `docker pull dbareldocker78/hello_world_db:latest` |
+
+The `dbareldocker78/hello_world_db` image is **public**, so no image pull secret is required. If you publish to a private registry, create a pull secret and reference it (not yet supported by this chart).
+
+## 1. Point kubectl at your cluster
+
+List the contexts kubectl knows about, then select the target cluster:
+
+```bash
+kubectl config get-contexts
+kubectl config use-context <your-context>
+kubectl cluster-info
+```
+
+`kubectl cluster-info` must succeed before installing. Both `kubectl` and `helm` honour the current context / `KUBECONFIG`, so no extra flags are needed.
+
+## 2. Preview the manifests (recommended)
+
+From the repository root:
+
+```bash
+helm lint myapp/helm
+helm template myapp myapp/helm
+helm install myapp myapp/helm --dry-run=server
+```
+
+`--dry-run=server` validates the rendered manifests against the live cluster API **without creating anything**. (In Helm 4, bare `--dry-run` is deprecated in favor of `--dry-run=client` / `--dry-run=server`.)
+
+## 3. Install the chart
+
+Into the `default` namespace:
+
+```bash
+helm install myapp myapp/helm
+```
+
+Into a dedicated namespace:
+
+```bash
+helm install myapp myapp/helm \
+  --namespace myapp \
+  --create-namespace
+```
+
+Pinned to a specific image version (CI publishes tags of the form `1.0.<run>`):
+
+```bash
+helm install myapp myapp/helm \
+  --set image.tag=1.0.1
+```
+
+## 4. Verify the deployment
+
+```bash
+kubectl get jobs
+kubectl get pods
+kubectl logs job/myapp
+```
+
+Expected:
+
+- `kubectl get jobs` shows `myapp` with `COMPLETIONS 1/1`.
+- `kubectl get pods` shows the pod reaching `Completed`.
+- `kubectl logs job/myapp` prints:
+
+```
+Hello World!
+My Name is Daniel Barel
+```
+
+> With `ttlSecondsAfterFinished: 60` the Job and its pod are deleted about a minute after completion, so they may already be gone when you look. `helm status myapp` still reports the release.
+
+## 5. Re-running the Job
+
+A `Job` runs exactly once. To run it again, delete it and re-apply, or reinstall the release:
+
+```bash
+kubectl delete job myapp
+helm upgrade --install myapp myapp/helm
+```
+
+If `helm upgrade` ever reports an immutable-field error, delete the Job first (as above) and retry.
+
+## 6. Change configuration / upgrade
+
+```bash
+helm upgrade myapp myapp/helm --set image.tag=1.0.2
+```
+
+Or supply a values file:
+
+```bash
+helm upgrade myapp myapp/helm -f my-values.yaml
+```
+
+### Upgrading a release installed with an older (Deployment-based) chart
+
+If a release was created before this chart was converted to a `Job`, it contains a `Deployment` instead. Because the application is a one-shot program, that Deployment's pod exits immediately and Kubernetes restarts it endlessly, so the pod reports `CrashLoopBackOff`.
+
+Upgrading the release to the current chart replaces the `Deployment` with a `Job`:
+
+```bash
+kubectl get deployments          # confirm the old Deployment is still present
+helm upgrade myapp myapp/helm
+kubectl get jobs                 # the Job now runs and reaches COMPLETIONS 1/1
+```
+
+Helm deletes resources that are no longer in the chart's manifest (the `Deployment`) and creates the new ones (the `Job`). To start from a clean slate instead:
+
+```bash
+helm uninstall myapp
+helm install myapp myapp/helm
+```
+
+## 7. Uninstall
+
+```bash
+helm uninstall myapp
+```
+
+With a dedicated namespace:
+
+```bash
+helm uninstall myapp --namespace myapp
+```
+
+## Chart values
+
+| Value | Default | Description |
+|---|---|---|
+| `image.repository` | `dbareldocker78/hello_world_db` | Container image repository |
+| `image.tag` | `""` (falls back to `Chart.appVersion`, i.e. `latest`) | Image tag |
+| `image.pullPolicy` | `Always` | Image pull policy |
+| `backoffLimit` | `3` | Retries before the Job is marked as failed |
+| `ttlSecondsAfterFinished` | `60` | Seconds after completion before the Job is deleted |
+| `resources.requests.cpu` | `100m` | CPU request |
+| `resources.requests.memory` | `128Mi` | Memory request |
+| `resources.limits.cpu` | `250m` | CPU limit |
+| `resources.limits.memory` | `256Mi` | Memory limit |
+
+Override any value with `--set key=value` or a values file (`-f file.yaml`).
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| `kubectl cluster-info` fails | No reachable cluster. Start Docker Desktop / kind / minikube and re-select the context. |
+| Pod stuck in `ImagePullBackOff` | The image tag does not exist. Use a tag CI published (`latest` or `1.0.<run>`); inspect with `kubectl describe pod -l app=myapp`. |
+| Pod stuck in `CrashLoopBackOff` | The release was installed with the older chart, which used a `Deployment`, but the app exits immediately. Upgrade to the `Job`-based chart (see section 6). |
+| Job/pod missing right after install | `ttlSecondsAfterFinished` cleaned them up. Check `helm status myapp`; re-run per section 5. |
+| `helm upgrade` fails with an immutable-field error | Kubernetes Jobs are immutable. Delete the Job (`kubectl delete job myapp`) and upgrade again. |
+| Want the manifest without a cluster | `helm template myapp myapp/helm` |
+
