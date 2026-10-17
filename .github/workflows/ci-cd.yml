@@ -3,8 +3,6 @@ name: CI/CD Pipeline
 on:
   push:
     branches: [main, master]
-  pull_request:
-    branches: [main, master]
   workflow_dispatch:
 
 env:
@@ -32,7 +30,6 @@ jobs:
       - name: Compute release version
         id: version
         run: |
-          chmod +x scripts/version.sh
           VERSION=$(scripts/version.sh "${GITHUB_RUN_NUMBER}")
           echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Computed version: $VERSION"
@@ -55,7 +52,6 @@ jobs:
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
-        if: github.event_name != 'pull_request'
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -65,7 +61,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: myapp
-          push: ${{ github.event_name != 'pull_request' }}
+          push: true
           tags: |
             ${{ env.IMAGE_NAME }}:${{ steps.version.outputs.VERSION }}
             ${{ env.IMAGE_NAME }}:latest
@@ -82,7 +78,6 @@ jobs:
   verify-image:
     name: Download and run the published image
     needs: build-and-push
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
 
     steps:
@@ -108,3 +103,46 @@ jobs:
             echo "- Pulled: \`$IMAGE\`"
             echo "- Container output verified"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  package-chart:
+    name: Package Helm chart
+    needs: verify-image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v4.3.1
+
+      - name: Lint the chart
+        run: helm lint myapp/helm
+
+      - name: Package the chart
+        id: package
+        run: |
+          TGZ=$(scripts/helm-package.sh)
+          echo "TGZ=$TGZ" >> "$GITHUB_OUTPUT"
+          echo "ARTIFACT_NAME=helm-chart-$(basename "$TGZ" .tgz)" >> "$GITHUB_OUTPUT"
+          echo "Packaged: $TGZ"
+
+      - name: Verify the package
+        run: |
+          set -euo pipefail
+          helm show chart "${{ steps.package.outputs.TGZ }}"
+          helm template myapp "${{ steps.package.outputs.TGZ }}" > /dev/null
+          echo "Packaged chart renders successfully."
+
+      - name: Upload chart package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.ARTIFACT_NAME }}
+          path: ${{ steps.package.outputs.TGZ }}
+
+      - name: Summary
+        run: |
+          echo "### Helm chart" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Package:** \`${{ steps.package.outputs.TGZ }}\`" >> "$GITHUB_STEP_SUMMARY"

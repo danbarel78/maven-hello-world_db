@@ -9,6 +9,7 @@
 *.war
 *.ear
 *.zip
+*.tgz
 
 # Eclipse #
 /.project
@@ -39,3 +40,6 @@ Init.txt
 .env.*
 secrets*
 *.local
+
+# Local documentation (not committed)
+deployment-and-validation.md

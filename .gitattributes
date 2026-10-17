@@ -1,0 +1,9 @@
+# Normalise line endings on commit.
+* text=auto
+
+# Shell scripts must use LF: CRLF breaks them under Linux/macOS bash (including CI),
+# where the first line fails with "set: pipefail: invalid option name".
+*.sh text eol=lf
+
+# PowerShell scripts keep CRLF line endings on Windows.
+*.ps1 text eol=crlf
