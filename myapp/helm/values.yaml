@@ -5,7 +5,7 @@ image:
 
 # Job controls: the application runs once to completion.
 backoffLimit: 3
-ttlSecondsAfterFinished: 60
+ttlSecondsAfterFinished: 120
 
 resources:
   requests:

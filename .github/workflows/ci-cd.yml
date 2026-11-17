@@ -94,7 +94,7 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE="${IMAGE_NAME}:${{ needs.build-and-push.outputs.VERSION }}"
-          output="$(docker run --rm "$IMAGE")"
+          output="$(docker run --rm "$IMAGE" "${{ needs.build-and-push.outputs.VERSION }}")"
           printf '%s\n' "$output"
           grep -q 'Hello World!' <<<"$output" || { echo "::error::missing 'Hello World!' in container output"; exit 1; }
           grep -qF 'My Name is Daniel Barel' <<<"$output" || { echo "::error::missing name line in container output"; exit 1; }

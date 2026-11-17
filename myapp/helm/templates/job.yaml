@@ -17,5 +17,7 @@ spec:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - "{{ .Chart.AppVersion }}"
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
