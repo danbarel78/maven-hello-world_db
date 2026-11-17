@@ -36,17 +36,34 @@ jobs:
 
       - name: Build with Maven
         run: |
-          mvn -f myapp/pom.xml clean package
+          mvn -B -f myapp/pom.xml clean package
 
       - name: Package versioned artifact
+        id: artifact
         run: |
-          cp "myapp/target/myapp-1.0-SNAPSHOT.jar" "myapp/target/myapp-${{ steps.version.outputs.VERSION }}.jar"
+          set -euo pipefail
+          # Maven names the JAR <artifactId>-<pom version>.jar, so the file name
+          # changes whenever <version> in myapp/pom.xml changes (it went from
+          # 1.0-SNAPSHOT to 1.1-SNAPSHOT). Discover the freshly built JAR instead
+          # of hardcoding its name, so a version bump cannot break the pipeline.
+          # `mvn clean` above guarantees this is the only JAR in target/.
+          JAR=$(find myapp/target -maxdepth 1 -type f -name 'myapp-*.jar' \
+                  ! -name '*-sources.jar' ! -name '*-javadoc.jar' -print -quit)
+          if [[ -z "$JAR" ]]; then
+            echo "::error::No myapp JAR found under myapp/target after 'mvn package'"
+            ls -l myapp/target || true
+            exit 1
+          fi
+          VERSIONED_JAR="myapp/target/myapp-${{ steps.version.outputs.VERSION }}.jar"
+          cp "$JAR" "$VERSIONED_JAR"
+          echo "JAR=$VERSIONED_JAR" >> "$GITHUB_OUTPUT"
+          echo "Artifact: $JAR -> $VERSIONED_JAR"
 
       - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: myapp-${{ steps.version.outputs.VERSION }}
-          path: myapp/target/myapp-${{ steps.version.outputs.VERSION }}.jar
+          path: ${{ steps.artifact.outputs.JAR }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
